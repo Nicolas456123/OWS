@@ -1479,7 +1479,13 @@ BEGIN
         UserGUID UUID
     ) ON COMMIT DROP;
 
-    _PasswordHash = crypt(_Password, gen_salt('md5'));
+    -- bcrypt (Blowfish) with cost factor 12 (~250ms per hash on modern CPU).
+    -- Replaces gen_salt('md5'), which is MD5-crypt — far too fast on GPU
+    -- (>100M attempts/sec) for credential storage. pgcrypto's crypt() auto-detects
+    -- the algorithm prefix from the stored hash, so PlayerLoginAndCreateSession's
+    -- crypt(_Password, PasswordHash) comparison works transparently with both
+    -- legacy MD5-crypt hashes and the new bcrypt hashes during transition.
+    _PasswordHash = crypt(_Password, gen_salt('bf', 12));
     _UserGUID := gen_random_uuid();
     INSERT INTO temp_table (UserGUID) VALUES (_UserGUID);
 
