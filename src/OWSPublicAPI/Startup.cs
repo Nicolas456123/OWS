@@ -27,6 +27,7 @@ using OWSPublicAPI.Requests;
 using OWSShared.Interfaces;
 using OWSShared.Implementations;
 using OWSShared.Middleware;
+using OWSShared.Services;
 using OWSExternalLoginProviders.Interfaces;
 using OWSExternalLoginProviders.Options;
 using OWSExternalLoginProviders.Extensions;
@@ -34,6 +35,7 @@ using Microsoft.OpenApi.Models;
 using Microsoft.Extensions.Hosting;
 using System.IO;
 using Microsoft.AspNetCore.DataProtection;
+using Serilog;
 
 
 namespace OWSPublicAPI
@@ -61,8 +63,26 @@ namespace OWSPublicAPI
         {
             services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo("./temp/DataProtection-Keys"));
 
+            services.AddCors(options =>
+            {
+                options.AddPolicy("OWSCorsPolicy", builder =>
+                {
+                    builder
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .SetIsOriginAllowedToAllowWildcardSubdomains()
+                        .WithOrigins(
+                            Configuration.GetSection("AllowedCorsOrigins").Get<string[]>()
+                            ?? new[] { "https://localhost", "http://localhost" }
+                        );
+                });
+            });
+
             services.AddMemoryCache();
             //services.AddMvc();
+
+            // Redis cache — singleton: ConnectionMultiplexer is thread-safe and expensive to create
+            services.AddSingleton<IHWRedisCacheService, HWRedisCacheService>();
 
             services.AddHttpContextAccessor();
 
@@ -74,6 +94,14 @@ namespace OWSPublicAPI
             })
             .AddViews()
             .AddApiExplorer()
+            // Force PascalCase JSON output: the UE5 OWSPlugin C++ deserializer is case-sensitive
+            // and expects field names matching the C# DTO PascalCase (UserSessionGUID, CharName, X, Y, Z, ZoneName...).
+            // Inbound requests from the plugin use Unreal's auto-camelCase (e.g. userSessionGUId) so we accept case-insensitive input.
+            .AddJsonOptions(options => {
+                options.JsonSerializerOptions.PropertyNamingPolicy = null;
+                options.JsonSerializerOptions.DictionaryKeyPolicy = null;
+                options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+            })
             .SetCompatibilityVersion(CompatibilityVersion.Version_3_0);
 
             services.AddSimpleInjector(container, options => {
@@ -127,6 +155,7 @@ namespace OWSPublicAPI
         {
             app.UseSimpleInjector(container);
 
+            app.UseMiddleware<RateLimitingMiddleware>();
             app.UseMiddleware<StoreCustomerGUIDMiddleware>(container);
 
             if (env.IsDevelopment())
@@ -138,12 +167,22 @@ namespace OWSPublicAPI
                 app.UseHsts();
             }
 
+            app.UseSerilogRequestLogging(options =>
+            {
+                options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+                {
+                    diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+                    diagnosticContext.Set("UserAgent", httpContext.Request.Headers["User-Agent"].ToString());
+                };
+            });
+
             //app.UseHttpsRedirection();
 
             //app.UseAuthentication();
 
             //app.UseStaticFiles();
             app.UseRouting();
+            app.UseCors("OWSCorsPolicy");
 
             app.UseMvc();
 
