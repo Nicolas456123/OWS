@@ -14,6 +14,7 @@ using OWSData.Models.Tables;
 using OWSData.Repositories.Interfaces;
 using OWSData.SQL;
 using OWSShared.Options;
+using Serilog;
 
 namespace OWSData.Repositories.Implementations.MSSQL
 {
@@ -87,7 +88,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"CreateCharacter Error: {ex}");
+                Log.Error(ex, "CreateCharacter failed");
 
                 return outputObject;
             }
@@ -123,7 +124,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 transaction.Rollback();
-                Console.WriteLine($"CreateCharacterUsingDefaultCharacterValues Error: {ex}");
+                Log.Error(ex, "CreateCharacterUsingDefaultCharacterValues failed");
                 outputObject = new SuccessAndErrorMessage()
                 {
                     Success = false,
@@ -196,7 +197,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(ex);
+                    Log.Error(ex, "GetUsers failed");
                 }
             }
 
@@ -309,7 +310,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"Logout Error: {ex}");
+                Log.Error(ex, "Logout failed");
 
                 return outputObject;
             }
@@ -342,7 +343,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"UserSessionSetSelectedCharacter Error: {ex}");
+                Log.Error(ex, "UserSessionSetSelectedCharacter failed");
 
                 return outputObject;
             }
@@ -379,7 +380,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"RegisterUser Error: {ex}");
+                Log.Error(ex, "RegisterUser failed");
 
                 return outputObject;
             }
@@ -424,7 +425,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"RemoveCharacter Error: {ex}");
+                Log.Error(ex, "RemoveCharacter failed");
 
                 return outputObject;
             }
@@ -459,7 +460,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
             {
                 outputObject.Success = false;
                 outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
-                Console.WriteLine($"UpdateUser Error: {ex}");
+                Log.Error(ex, "UpdateUser failed");
 
                 return outputObject;
             }

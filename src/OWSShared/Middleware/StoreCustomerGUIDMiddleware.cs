@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using OWSShared.Interfaces;
+using Serilog;
 
 namespace OWSShared.Middleware
 {
@@ -34,7 +35,9 @@ namespace OWSShared.Middleware
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"StoreCustomerGUID Error: {ex.Message}");
+                // Debug-level: malformed/missing X-CustomerGUID is a normal client error,
+                // not a server fault. Bumping to Error would drown legitimate signal in noise.
+                Log.Debug(ex, "StoreCustomerGUID rejected header");
                 context.Response.StatusCode = 401;
                 await context.Response.WriteAsync("Invalid or missing X-CustomerGUID header");
                 return;
