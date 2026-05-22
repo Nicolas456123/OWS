@@ -71,7 +71,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -108,7 +108,7 @@ namespace OWSData.Repositories.Implementations.Postgres
                 outputObject = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return outputObject;
@@ -274,7 +274,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -306,7 +306,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -341,7 +341,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -385,7 +385,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -419,7 +419,7 @@ namespace OWSData.Repositories.Implementations.Postgres
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }

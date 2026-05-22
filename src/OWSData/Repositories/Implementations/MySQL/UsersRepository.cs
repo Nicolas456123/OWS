@@ -70,7 +70,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -107,7 +107,7 @@ namespace OWSData.Repositories.Implementations.MySQL
                 outputObject = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return outputObject;
@@ -273,7 +273,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -304,7 +304,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -339,7 +339,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -383,7 +383,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }
@@ -417,7 +417,7 @@ namespace OWSData.Repositories.Implementations.MySQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
 
                 return outputObject;
             }

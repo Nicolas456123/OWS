@@ -279,7 +279,7 @@ namespace OWSData.Repositories.Implementations.Postgres
                 SuccessAndErrorMessage output = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return output;
@@ -322,7 +322,7 @@ namespace OWSData.Repositories.Implementations.Postgres
                 SuccessAndErrorMessage output = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return output;
@@ -365,7 +365,7 @@ namespace OWSData.Repositories.Implementations.Postgres
                 SuccessAndErrorMessage output = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return output;
