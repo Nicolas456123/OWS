@@ -185,7 +185,7 @@ namespace OWSPublicAPI.Controllers
         [Produces(typeof(PlayerLoginAndCreateSession))]
         public async Task<IActionResult> LoginAndCreateSession([FromBody] LoginAndCreateSessionRequest request)
         {
-            request.SetData(_usersRepository, _customerGuid);
+            request.SetData(_usersRepository, _customerGuid, _publicAPIInputValidation);
             return await request.Handle();
         }
 
