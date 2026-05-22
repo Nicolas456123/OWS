@@ -42,6 +42,9 @@ namespace OWSCharacterPersistence
         {
             services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo("./temp/DataProtection-Keys"));
 
+            // Required by RateLimitingMiddleware (per-IP, per-endpoint quota cache).
+            services.AddMemoryCache();
+
             services.AddHttpContextAccessor();
 
             services.AddMvcCore(config =>
@@ -91,6 +94,13 @@ namespace OWSCharacterPersistence
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             app.UseSimpleInjector(container);
+
+            // Apply the same RateLimitingMiddleware that protects OWSPublicAPI:
+            // default 60 req/min/IP, plus tighter quotas on sensitive endpoints
+            // (defined in RateLimitingMiddleware.EndpointLimits). Bound to the
+            // pipeline before the CustomerGUID check so brute-force attempts get
+            // throttled even when they carry a guessed-but-invalid header.
+            app.UseMiddleware<RateLimitingMiddleware>();
 
             app.UseMiddleware<StoreCustomerGUIDMiddleware>(container);
 

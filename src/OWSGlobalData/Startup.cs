@@ -43,6 +43,7 @@ namespace OWSGlobalData
             services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo("./temp/DataProtection-Keys"));
 
             services.AddHttpContextAccessor();
+            services.AddMemoryCache();
 
             services.AddMvcCore(config =>
             {
@@ -86,6 +87,11 @@ namespace OWSGlobalData
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             app.UseSimpleInjector(container);
+
+            // Apply the same RateLimitingMiddleware as OWSPublicAPI / OWSManagement
+            // (default 60 req/min/IP). Wired before CustomerGUID so throttling kicks
+            // in even on guessed-header attempts.
+            app.UseMiddleware<RateLimitingMiddleware>();
 
             app.UseMiddleware<StoreCustomerGUIDMiddleware>(container);
 
