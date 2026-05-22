@@ -48,6 +48,39 @@ Lancer le service avec `ASPNETCORE_ENVIRONMENT=Production` pour activer l'overri
 - **Logs serveur** : audit complet effectué — aucun leak de password / SessionGUID / connection-string dans les `Log.*` Serilog. Cependant **7 `Console.WriteLine($"... Error: {ex}")`** dans `src/OWSData/Repositories/Implementations/MSSQL/UsersRepository.cs` (CreateCharacter, Logout, RegisterUser, UpdateUser, etc.) + 1 dans `StoreCustomerGUIDMiddleware.cs:37` dumpent l'exception complète (stack trace, class names internes) en stdout, **bypassant le pipeline Serilog structuré**. Pas de credential leak (Dapper protège les valeurs paramétrées), mais à migrer vers `Log.Error(ex, "...")` pour bénéficier des filtres Serilog et du formatage JSON Elasticsearch en prod. Faible criticité, cleanup recommandé.
 - **`Serilog.MinimumLevel`** : tous les `appsettings.json` utilisent `Default: "Debug"` — verbeux mais OK car écrasé en prod par `appsettings.Production.json` (à créer le jour du déploiement, voir §5 ci-dessous).
 
+## 4bis. Changelog de la session sécurité 2026-05-23
+
+Vue chronologique de tout ce qui a été durci ce soir (côté OWS). Les commits "WIP" ne sont pas des fixes de sécurité, ils encapsulent juste le travail local préexistant que la session a dû commit séparément pour garder les commits sécu lisibles.
+
+| Hash | Type | Surface durcie |
+|---|---|---|
+| `d8b81ed` | sécu | Untrack `.env` + `OWSInstanceLauncher/appsettings.json` ; SECURITY.md initial ; `.gitignore` étendu |
+| `1d58ddd` | WIP | Redis singleton + JSON casing PascalCase + Serilog request logging + rate-limit wiring |
+| `b86b269` | sécu | OWSPublicAPI CORS : `WithHeaders/WithMethods` explicites au lieu de `AllowAnyHeader/AllowAnyMethod` |
+| `ece666a` | docs | Bilan CORS + audit `ASPNETCORE_ENVIRONMENT` (OK : prod K8s = Production, overrides dev local légitimes) |
+| `277871d` | sécu | Per-endpoint rate-limit : login 5/min, register 3/min, défaut 60/min, 7 tests xUnit |
+| `983aa74` | docs | Audit logs Serilog → aucun leak credential ; Console.WriteLine listés pour cleanup |
+| `520d672` | WIP | UsersRepository MSSQL refactor (per-method `using var conn`, generic errors, transaction param) |
+| `77c7dc2` | sécu | `Console.WriteLine` → `Serilog.Log.Error` sur UsersRepository MSSQL + middleware GUID |
+| `37ed399` | sécu | `IPublicAPIInputValidation` câblé dans `RegisterUserRequest` (Email/Password/FirstName/LastName) |
+| `051adf6` | sécu | **MD5-crypt → bcrypt cost 12** dans `AddUser` SP (setup.sql) |
+| `7bf0044` | sécu | RateLimitingMiddleware sur OWSManagement + entrée SECURITY.md sur l'isolation réseau admin |
+| `15cb4c3` | WIP | Launcher OtherCustomFlags + LiveCoding kill |
+| `52566f3` | sécu | mapName regex `^[A-Za-z][A-Za-z0-9_]{0,63}$` dans le launcher → bloque CLI arg injection |
+| `2710265` | sécu | `LoginAndCreateSession` : `ValidateEmail` pré-filtre + message d'erreur générique anti-enumeration |
+| `5b9ba84` | sécu | RateLimitingMiddleware câblé sur les 3 services OWS restants (CharacterPersistence/GlobalData/InstanceManagement) |
+| `d0f9bba` | sécu | `UpdateAllPlayerPositions` durci (TryParse + IsFinite + bornes 10 000 km) ; `UpdateCharacterStats` ne renvoie plus `ex.Message` |
+| `e21d863` | sécu | 20+ `ErrorMessage = ex.Message` côté Postgres + MySQL repositories → message générique (info disclosure colmaté) |
+
+Côté client UE5.4 (privé, branche `refactor/source-reorganization`) :
+- `fa15544` security: WithValidation Server_SetFlySpeed + Server_TravelToDeadKingdom + BuildJsonBody pour le login Slate
+- `9159453` security: SessionGUID + CustomerKey masqués dans 6 logs client
+- `b1a2d38` security: WithValidation x3 supplémentaires (CreateDeformation/ChangeAppearance/ChangeOverlapStatus)
+- `5a071f7` security: template secrets enrichi (instructions de génération `openssl rand -hex 16` + politique rotation)
+
+Côté site Hybelior (public, branche `main`) :
+- `0cf69e574` security: CSP + HSTS + X-Frame-Options + Referrer-Policy + Permissions-Policy ; mot de passe éditeur en header `X-Editor-Password` uniquement (plus de query string)
+
 ## 5. À faire le jour J du premier déploiement
 
 1. Générer tous les nouveaux secrets (passwords forts, GUIDs frais) — utiliser `openssl rand -base64 32` ou équivalent.
