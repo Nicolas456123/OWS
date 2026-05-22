@@ -37,10 +37,11 @@ Lancer le service avec `ASPNETCORE_ENVIRONMENT=Production` pour activer l'overri
 
 ## 4. Durcissement supplémentaire à faire avant exposition publique
 
-- **CORS** : `src/OWSPublicAPI/Startup.cs:71-73` — remplacer `AllowAnyHeader()` + `AllowAnyMethod()` par une whitelist explicite des headers/méthodes utilisés. Restreindre `AllowedCorsOrigins` aux domaines réels de production.
-- **CustomerGUID auth** : `src/OWSShared/Middleware/StoreCustomerGUIDMiddleware.cs` — ajouter un HMAC signé partagé entre client et serveur, ou exiger un JWT au-dessus du simple header GUID. Ajouter du rate-limiting (ex. AspNetCoreRateLimit).
-- **TLS** : forcer HTTPS sur tous les endpoints publics, désactiver HTTP simple.
+- **CORS** : ~~`src/OWSPublicAPI/Startup.cs:71-73`~~ ✅ traité (commit `b86b269`) — whitelist explicite des headers (`X-CustomerGUID`, `Content-Type`, `Accept`, `Authorization`) et méthodes (`GET`, `POST`, `OPTIONS`). `AllowedCorsOrigins` toujours à restreindre aux domaines réels de prod côté `appsettings.Production.json`.
+- **CustomerGUID auth** : `src/OWSShared/Middleware/StoreCustomerGUIDMiddleware.cs` — ajouter un HMAC signé partagé entre client et serveur, ou exiger un JWT au-dessus du simple header GUID. Rate-limiting basique déjà en place (`RateLimitingMiddleware`, 60 req/min/IP), à raffiner par endpoint sensible (login/register).
+- **TLS** : forcer HTTPS sur tous les endpoints publics, désactiver HTTP simple. `ASPNETCORE_URLS` côté `configmap.yaml` est en `http://+:80` — terminer le TLS au niveau d'un ingress (déjà présent : `k8s/ingress.yaml`, à durcir avec `cert-manager` + redirection HTTP→HTTPS forcée).
 - **K8s** : `k8s/secret.yaml` — ne pas appliquer tel quel ; passer par un Secret externe (sealed-secrets, External Secrets Operator avec Vault/Azure Key Vault) avant `kubectl apply`.
+- **`ASPNETCORE_ENVIRONMENT` overrides** : les fichiers `src/docker-compose.override.windows.yml` et `.osx.yml` settent `ASPNETCORE_ENVIRONMENT=Development` (légitime en dev local — docker-compose les charge automatiquement). **Ne jamais déployer un de ces overrides sur un serveur exposé** : `UseDeveloperExceptionPage()` y exposerait des stack traces complètes. La prod K8s utilise `configmap.yaml` (Production) et le `docker-compose.yml` de base n'override pas la valeur, donc le défaut runtime ASP.NET (Production) s'applique. ✓ audité.
 
 ## 5. À faire le jour J du premier déploiement
 
