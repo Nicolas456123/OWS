@@ -256,7 +256,25 @@ namespace OWSInstanceLauncher.Services
                 + (_owsInstanceLauncherOptions.Value.UseServerLog ? "-log " : "")
                 + (_owsInstanceLauncherOptions.Value.UseNoSteam ? "-nosteam " : "")
                 + "-port={1} "
-                + "-zoneinstanceid={2}";
+                + "-zoneinstanceid={2} "
+                + (_owsInstanceLauncherOptions.Value.OtherCustomFlags ?? "");
+
+            // Kill LiveCodingConsole.exe before spawning a second UE5 instance.
+            // The shared console makes the 2nd UnrealEditor crash on TSharedPtr IsValid() assertion
+            // in UnrealEditor-LiveCoding.dll. Killing it lets the dedicated server boot cleanly.
+            // Cf Documentation/_Pilotage/Session-2026-05-12-Login-Fix.md §19.1.
+            foreach (var lcc in System.Diagnostics.Process.GetProcessesByName("LiveCodingConsole"))
+            {
+                try
+                {
+                    Log.Information($"Killing LiveCodingConsole.exe PID {lcc.Id} before spawning dedicated server.");
+                    lcc.Kill();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to kill LiveCodingConsole PID {lcc.Id}: {ex.Message}");
+                }
+            }
 
             System.Diagnostics.Process proc = new System.Diagnostics.Process
             {
