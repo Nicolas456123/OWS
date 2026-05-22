@@ -14,11 +14,18 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Serilog;
+using System.Text.RegularExpressions;
 
 namespace OWSInstanceLauncher.Services
 {
     public class ServerLauncherMQListener : IInstanceLauncherJob //BackgroundService
     {
+        // Map names are passed unquoted into the dedicated-server command line.
+        // Restrict to identifier-ish strings so anyone able to publish on the spin-up
+        // queue (compromised Instance Management, internal-network attacker, etc.)
+        // cannot smuggle extra CLI flags via something like  "Map -dpcvars=…" .
+        private static readonly Regex MapNameAllowed = new Regex(@"^[A-Za-z][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled);
+
         private IConnection connection;
         private IModel serverSpinUpChannel;
         private IModel serverShutDownChannel;
@@ -245,6 +252,15 @@ namespace OWSInstanceLauncher.Services
             if (_customerGUID != customerGUID)
             {
                 Log.Error("HandleServerSpinUpMessage - Incoming CustomerGUID does not match OWSAPIKey in appsettings.json");
+                return;
+            }
+
+            // Defense-in-depth: refuse map names that could break out of the {0} slot
+            // in serverArguments and inject extra command-line flags into the dedicated
+            // server process (e.g. -execcmds=…, -log=…, -dpcvars=…).
+            if (string.IsNullOrEmpty(mapName) || !MapNameAllowed.IsMatch(mapName))
+            {
+                Log.Error("HandleServerSpinUpMessage - Rejected suspicious MapName {MapName} (must match ^[A-Za-z][A-Za-z0-9_]{{0,63}}$)", mapName);
                 return;
             }
 
