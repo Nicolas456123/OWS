@@ -24,6 +24,7 @@ namespace OWSPublicAPI.Requests.Users
         private readonly Guid _customerGUID;
         private readonly IUsersRepository _usersRepository;
         private readonly IExternalLoginProviderFactory _externalLoginProviderFactory;
+        private readonly IPublicAPIInputValidation _publicAPIInputValidation;
 
         /// <summary>
         /// RegisterUserRequest Constructor
@@ -31,12 +32,13 @@ namespace OWSPublicAPI.Requests.Users
         /// <remarks>
         /// Initialize the RegisterUserRequest object with dependencies
         /// </remarks>
-        public RegisterUserRequest(RegisterUserDTO registerUserDTO, IUsersRepository usersRepository, IExternalLoginProviderFactory externalLoginProviderFactory, IHeaderCustomerGUID customerGuid)
+        public RegisterUserRequest(RegisterUserDTO registerUserDTO, IUsersRepository usersRepository, IExternalLoginProviderFactory externalLoginProviderFactory, IHeaderCustomerGUID customerGuid, IPublicAPIInputValidation publicAPIInputValidation)
         {
             _registerUserDTO = registerUserDTO;
             _customerGUID = customerGuid.CustomerGUID;
             _usersRepository = usersRepository;
             _externalLoginProviderFactory = externalLoginProviderFactory;
+            _publicAPIInputValidation = publicAPIInputValidation;
         }
 
         /// <summary>
@@ -47,6 +49,25 @@ namespace OWSPublicAPI.Requests.Users
         /// </remarks>
         public async Task<PlayerLoginAndCreateSession> Handle()
         {
+            // Server-side input validation. The UE5 client validates as well, but anyone
+            // bypassing it (curl, replay, rogue client) would otherwise inject malformed
+            // emails / short passwords / XSS payloads in FirstName-LastName directly into the DB.
+            var emailError     = _publicAPIInputValidation.ValidateEmail(_registerUserDTO.Email);
+            if (!string.IsNullOrEmpty(emailError))
+                return new PlayerLoginAndCreateSession { ErrorMessage = emailError };
+
+            var passwordError  = _publicAPIInputValidation.ValidatePassword(_registerUserDTO.Password);
+            if (!string.IsNullOrEmpty(passwordError))
+                return new PlayerLoginAndCreateSession { ErrorMessage = passwordError };
+
+            var firstNameError = _publicAPIInputValidation.ValidateFirstName(_registerUserDTO.FirstName);
+            if (!string.IsNullOrEmpty(firstNameError))
+                return new PlayerLoginAndCreateSession { ErrorMessage = firstNameError };
+
+            var lastNameError  = _publicAPIInputValidation.ValidateLastName(_registerUserDTO.LastName);
+            if (!string.IsNullOrEmpty(lastNameError))
+                return new PlayerLoginAndCreateSession { ErrorMessage = lastNameError };
+
             //Check for duplicate account before creating a new one:
             var foundUser = await _usersRepository.GetUserFromEmail(_customerGUID, _registerUserDTO.Email);
 
