@@ -28,12 +28,16 @@ namespace OWSShared.Middleware
                 {
                     context.Response.Clear();
                     context.Response.StatusCode = 401;
-                    await context.Response.WriteAsync("Unauthorized");
+                    await context.Response.WriteAsync("Invalid or missing X-CustomerGUID header");
                     return;
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.WriteLine($"StoreCustomerGUID Error: {ex.Message}");
+                context.Response.StatusCode = 401;
+                await context.Response.WriteAsync("Invalid or missing X-CustomerGUID header");
+                return;
             }
 
             await next(context);

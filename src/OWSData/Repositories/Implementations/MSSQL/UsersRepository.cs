@@ -38,13 +38,13 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             IEnumerable<GetAllCharacters> outputObject = new List<GetAllCharacters>();
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("CustomerGUID", customerGUID);
                 p.Add("UserSessionGUID", userSessionGUID);
 
-                outputObject = await Connection.QueryAsync<GetAllCharacters>(GenericQueries.GetAllCharacters,
+                outputObject = await conn.QueryAsync<GetAllCharacters>(GenericQueries.GetAllCharacters,
                 p,
                 commandType: CommandType.Text);
             }
@@ -58,7 +58,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("CustomerGUID", customerGUID);
@@ -67,7 +67,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                     p.Add("ClassName", className);
                     p.Add("ErrorMessage", dbType: DbType.String, direction: ParameterDirection.Output, size: 50);
 
-                    outputObject = await Connection.QuerySingleAsync<CreateCharacter>("AddCharacter",
+                    outputObject = await conn.QuerySingleAsync<CreateCharacter>("AddCharacter",
                     p,
                     commandType: CommandType.StoredProcedure);
                 }
@@ -86,7 +86,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"CreateCharacter Error: {ex}");
 
                 return outputObject;
             }
@@ -107,23 +108,26 @@ namespace OWSData.Repositories.Implementations.MSSQL
                     parameters.Add("CharacterName", characterName);
                     parameters.Add("DefaultSetName", defaultSetName);
 
-                    int outputCharacterId = await Connection.QuerySingleOrDefaultAsync<int>(MSSQLQueries.AddCharacterUsingDefaultCharacterValues,
+                    int outputCharacterId = await conn.QuerySingleOrDefaultAsync<int>(MSSQLQueries.AddCharacterUsingDefaultCharacterValues,
                         parameters,
-                    commandType: CommandType.Text);
+                    commandType: CommandType.Text,
+                    transaction: transaction);
 
                     parameters.Add("CharacterID", outputCharacterId);
-                    await Connection.ExecuteAsync(GenericQueries.AddDefaultCustomCharacterData,
+                    await conn.ExecuteAsync(GenericQueries.AddDefaultCustomCharacterData,
                         parameters,
-                        commandType: CommandType.Text);
+                        commandType: CommandType.Text,
+                        transaction: transaction);
                     transaction.Commit();
             }
             catch (Exception ex)
             {
                 transaction.Rollback();
+                Console.WriteLine($"CreateCharacterUsingDefaultCharacterValues Error: {ex}");
                 outputObject = new SuccessAndErrorMessage()
                 {
                     Success = false,
-                    ErrorMessage = ex.Message
+                    ErrorMessage = "An internal error occurred. Please try again later."
                 };
 
                 return outputObject;
@@ -143,7 +147,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             IEnumerable<GetPlayerGroupsCharacterIsIn> outputObject;
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("@CustomerGUID", customerGUID);
@@ -151,7 +155,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                 p.Add("@UserSessionGUID", userSessionGUID);
                 p.Add("@PlayerGroupTypeID", playerGroupTypeID);
 
-                outputObject = await Connection.QueryAsync<GetPlayerGroupsCharacterIsIn>("GetPlayerGroupsCharacterIsIn",
+                outputObject = await conn.QueryAsync<GetPlayerGroupsCharacterIsIn>("GetPlayerGroupsCharacterIsIn",
                     p,
                     commandType: CommandType.StoredProcedure);
             }
@@ -163,13 +167,13 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             User outputObject = new User();
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("@CustomerGUID", customerGuid);
                 p.Add("@UserGUID", userGuid);
 
-                outputObject = await Connection.QuerySingleOrDefaultAsync<User>("GetUser",
+                outputObject = await conn.QuerySingleOrDefaultAsync<User>("GetUser",
                     p,
                     commandType: CommandType.StoredProcedure);
             }
@@ -181,14 +185,14 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             IEnumerable<User> outputObject = null;
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("@CustomerGUID", customerGuid);
 
                 try
                 {
-                    outputObject = await Connection.QueryAsync<User>(GenericQueries.GetUsers, p);
+                    outputObject = await conn.QueryAsync<User>(GenericQueries.GetUsers, p);
                 }
                 catch (Exception ex)
                 {
@@ -203,13 +207,13 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             GetUserSession outputObject = new GetUserSession();
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("@CustomerGUID", customerGUID);
                 p.Add("@UserSessionGUID", userSessionGUID);
 
-                outputObject = await Connection.QuerySingleOrDefaultAsync<GetUserSession>("GetUserSession",
+                outputObject = await conn.QuerySingleOrDefaultAsync<GetUserSession>("GetUserSession",
                     p,
                     commandType: CommandType.StoredProcedure);
             }
@@ -221,9 +225,9 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             GetUserSession outputObject = new GetUserSession();
 
-            using (Connection)
+            using (var conn = Connection)
             {
-                outputObject = await Connection.QueryFirstOrDefaultAsync<GetUserSession>(MSSQLQueries.GetUserSessionSQL, new { CustomerGUID = customerGUID, UserSessionGUID = userSessionGUID });
+                outputObject = await conn.QueryFirstOrDefaultAsync<GetUserSession>(MSSQLQueries.GetUserSessionSQL, new { CustomerGUID = customerGUID, UserSessionGUID = userSessionGUID });
             }
 
             return outputObject;
@@ -236,14 +240,22 @@ namespace OWSData.Repositories.Implementations.MSSQL
             User user = new User();
             Characters character = new Characters();
 
-            using (Connection)
+            using (var conn = Connection)
             {
-                userSession = await Connection.QueryFirstOrDefaultAsync<UserSessions>(MSSQLQueries.GetUserSessionOnlySQL, new { CustomerGUID = customerGUID, UserSessionGUID = userSessionGUID });
-                var userTask = Connection.QueryFirstOrDefaultAsync<User>(MSSQLQueries.GetUserSQL, new { CustomerGUID = customerGUID, UserGUID = userSession.UserGuid });
-                var characterTask = Connection.QueryFirstOrDefaultAsync<Characters>(MSSQLQueries.GetCharacterByNameSQL, new { CustomerGUID = customerGUID, CharacterName = userSession.SelectedCharacterName });
+                // First query must complete because subsequent queries depend on its results
+                userSession = await conn.QueryFirstOrDefaultAsync<UserSessions>(MSSQLQueries.GetUserSessionOnlySQL, new { CustomerGUID = customerGUID, UserSessionGUID = userSessionGUID });
 
-                user = await userTask;
-                character = await characterTask;
+                if (userSession != null)
+                {
+                    // Run user and character queries in parallel on the same open connection
+                    var userTask = conn.QueryFirstOrDefaultAsync<User>(MSSQLQueries.GetUserSQL, new { CustomerGUID = customerGUID, UserGUID = userSession.UserGuid });
+                    var characterTask = conn.QueryFirstOrDefaultAsync<Characters>(MSSQLQueries.GetCharacterByNameSQL, new { CustomerGUID = customerGUID, CharacterName = userSession.SelectedCharacterName });
+
+                    await Task.WhenAll(userTask, characterTask);
+
+                    user = userTask.Result;
+                    character = characterTask.Result;
+                }
             }
 
             outputObject.userSession = userSession;
@@ -257,7 +269,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             PlayerLoginAndCreateSession outputObject;
 
-            using (Connection)
+            using (var conn = Connection)
             {
                 var p = new DynamicParameters();
                 p.Add("@CustomerGUID", customerGUID);
@@ -265,7 +277,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                 p.Add("@Password", password);
                 p.Add("@DontCheckPassword", dontCheckPassword);
 
-                outputObject = await Connection.QuerySingleOrDefaultAsync<PlayerLoginAndCreateSession>("PlayerLoginAndCreateSession",
+                outputObject = await conn.QuerySingleOrDefaultAsync<PlayerLoginAndCreateSession>("PlayerLoginAndCreateSession",
                     p,
                     commandType: CommandType.StoredProcedure);
             }
@@ -279,13 +291,13 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("@CustomerGUID", customerGuid);
                     p.Add("@UserSessionGUID", userSessionGuid);
 
-                    await Connection.ExecuteAsync(GenericQueries.Logout, p, commandType: CommandType.Text);
+                    await conn.ExecuteAsync(GenericQueries.Logout, p, commandType: CommandType.Text);
                 }
 
                 outputObject.Success = true;
@@ -296,7 +308,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"Logout Error: {ex}");
 
                 return outputObject;
             }
@@ -308,14 +321,14 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("@CustomerGUID", customerGUID);
                     p.Add("@UserSessionGUID", userSessionGUID);
                     p.Add("@SelectedCharacterName", selectedCharacterName);
 
-                    await Connection.ExecuteAsync("UserSessionSetSelectedCharacter",
+                    await conn.ExecuteAsync("UserSessionSetSelectedCharacter",
                         p,
                         commandType: CommandType.StoredProcedure);
                 }
@@ -328,7 +341,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"UserSessionSetSelectedCharacter Error: {ex}");
 
                 return outputObject;
             }
@@ -340,7 +354,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("@CustomerGUID", customerGUID);
@@ -351,7 +365,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                     p.Add("@Role", "Player");
                     p.Add("@UserGUID", dbType: DbType.Guid, direction: ParameterDirection.Output);
 
-                    await Connection.ExecuteAsync("AddUser",
+                    await conn.ExecuteAsync("AddUser",
                         p,
                         commandType: CommandType.StoredProcedure);
                 }
@@ -364,7 +378,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"RegisterUser Error: {ex}");
 
                 return outputObject;
             }
@@ -374,9 +389,9 @@ namespace OWSData.Repositories.Implementations.MSSQL
         {
             GetUserSession outputObject = new GetUserSession();
 
-            using (Connection)
+            using (var conn = Connection)
             {
-                outputObject = await Connection.QueryFirstOrDefaultAsync<GetUserSession>(MSSQLQueries.GetUserFromEmailSQL, new { CustomerGUID = customerGUID, Email = email });
+                outputObject = await conn.QueryFirstOrDefaultAsync<GetUserSession>(MSSQLQueries.GetUserFromEmailSQL, new { CustomerGUID = customerGUID, Email = email });
             }
 
             return outputObject;
@@ -388,14 +403,14 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("@CustomerGUID", customerGUID);
                     p.Add("@UserSessionGUID", userSessionGUID);
                     p.Add("@CharacterName", characterName);
 
-                    await Connection.ExecuteAsync("RemoveCharacter",
+                    await conn.ExecuteAsync("RemoveCharacter",
                         p,
                         commandType: CommandType.StoredProcedure);
                 }
@@ -408,7 +423,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"RemoveCharacter Error: {ex}");
 
                 return outputObject;
             }
@@ -420,7 +436,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
 
             try
             {
-                using (Connection)
+                using (var conn = Connection)
                 {
                     var p = new DynamicParameters();
                     p.Add("@CustomerGUID", customerGuid);
@@ -429,7 +445,7 @@ namespace OWSData.Repositories.Implementations.MSSQL
                     p.Add("@LastName", lastName);
                     p.Add("@Email", email);
 
-                    await Connection.ExecuteAsync(GenericQueries.UpdateUser,
+                    await conn.ExecuteAsync(GenericQueries.UpdateUser,
                         p,
                         commandType: CommandType.Text);
                 }
@@ -442,7 +458,8 @@ namespace OWSData.Repositories.Implementations.MSSQL
             catch (Exception ex)
             {
                 outputObject.Success = false;
-                outputObject.ErrorMessage = ex.Message;
+                outputObject.ErrorMessage = "An internal error occurred. Please try again later.";
+                Console.WriteLine($"UpdateUser Error: {ex}");
 
                 return outputObject;
             }
