@@ -67,9 +67,15 @@ namespace OWSPublicAPI
             {
                 options.AddPolicy("OWSCorsPolicy", builder =>
                 {
+                    // Explicit allow-list: never AllowAnyHeader/Method on a public API.
+                    // - X-CustomerGUID: OWS tenant identifier (StoreCustomerGUIDMiddleware).
+                    // - Content-Type/Accept: standard JSON content negotiation.
+                    // - Authorization: reserved for future JWT/Bearer rollout.
+                    // OPTIONS is required for browser CORS preflight; GET/POST cover every
+                    // OWSPublicAPI action (no PUT/DELETE/PATCH endpoints in this service).
                     builder
-                        .AllowAnyHeader()
-                        .AllowAnyMethod()
+                        .WithHeaders("X-CustomerGUID", "Content-Type", "Accept", "Authorization")
+                        .WithMethods("GET", "POST", "OPTIONS")
                         .SetIsOriginAllowedToAllowWildcardSubdomains()
                         .WithOrigins(
                             Configuration.GetSection("AllowedCorsOrigins").Get<string[]>()
