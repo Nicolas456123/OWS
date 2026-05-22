@@ -361,6 +361,20 @@ MigrationBackup/
 temp/
 docker-compose.override.yml
 
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/appsettings.Production.json
+**/appsettings.Staging.json
+**/appsettings.*.secret.json
+
+# OWSInstanceLauncher appsettings.json contains machine-specific paths
+# (PathToDedicatedServer, PathToUProject) — must stay local
+src/OWSInstanceLauncher/appsettings.json
+
 # Log Files
 Buffer.bookmark
 Buffer-*.txt
