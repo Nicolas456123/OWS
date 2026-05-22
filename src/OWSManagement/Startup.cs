@@ -97,6 +97,11 @@ namespace OWSManagement
 
             app.UseSimpleInjector(container);
 
+            // Rate-limit admin endpoints too: a brute-force across the CustomerGUID
+            // space is otherwise unbounded. Same RateLimitingMiddleware used by
+            // OWSPublicAPI; default 60 req/min/IP applies to every Management path.
+            app.UseMiddleware<RateLimitingMiddleware>();
+
             app.UseMiddleware<StoreCustomerGUIDMiddleware>(container);
 
             app.UseSwagger();
