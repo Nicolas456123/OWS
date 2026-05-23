@@ -153,6 +153,15 @@ namespace OWSManagement
 
             container.Register<IHeaderCustomerGUID, HeaderCustomerGUID>(Lifestyle.Scoped);
 
+            // HMAC verification in StoreCustomerGUIDMiddleware needs IConfiguration to read
+            // the OWSHmac section. SimpleInjector doesn't auto-cross-wire framework services
+            // and Container.Options.ResolveUnregisteredConcreteTypes is false, so without
+            // these two lines the SimpleInjectorMiddlewareFactory throws ActivationException
+            // at first request (and container.Verify() throws at startup). Keep Scoped: the
+            // middleware reads IHeaderCustomerGUID which is per-request.
+            container.RegisterInstance<IConfiguration>(Configuration);
+            container.Register<StoreCustomerGUIDMiddleware>(Lifestyle.Scoped);
+
         }
     }
 }

@@ -213,7 +213,17 @@ namespace OWSShared.Middleware
 
         private static async Task Reject401(HttpContext context, string message)
         {
-            context.Response.Clear();
+            // ASP.NET Core's HttpResponse has no Clear() (that was classic System.Web).
+            // We achieve the same effect by clearing headers + resetting content metadata
+            // before writing. Don't touch the body Stream — WriteAsync handles framing.
+            // Guard the header clear: throws if anything downstream already started writing
+            // the response, in which case the best we can do is set the status code.
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Headers.Clear();
+                context.Response.ContentLength = null;
+                context.Response.ContentType = "text/plain";
+            }
             context.Response.StatusCode = 401;
             await context.Response.WriteAsync(message);
         }
