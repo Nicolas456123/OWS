@@ -320,28 +320,95 @@ namespace OWSTests.Middleware
         }
 
         [Fact]
-        public async Task Hmac_EnabledButEmptySecret_FailsClosed()
+        public void Hmac_EnabledButEmptySecret_ThrowsAtConstruction()
         {
-            // Misconfigured: Enabled=true but Secret="". Middleware logs error and falls back to
-            // legacy behavior (no HMAC check) rather than fail-open with empty key. The legacy
-            // X-CustomerGUID parsing still applies, so a valid GUID still passes.
+            // Misconfigured: Enabled=true but Secret="". The old behavior (disable HMAC
+            // silently + Log.Error once) was fail-OPEN: after log rotation the operator
+            // had no signal HMAC was off. New behavior: throw at middleware construction
+            // so the service refuses to start until either the secret is set OR the
+            // operator explicitly sets Enabled=false to opt out.
             var customerGuid = new TestHeaderCustomerGUID();
             var config = BuildConfig(new() {
                 ["Enabled"] = "true",
                 ["RequireSignature"] = "true",
                 ["Secret"] = "",
             });
+
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => CreateMiddleware(customerGuid, config));
+            Assert.Contains("OWSHmac:Secret", ex.Message);
+        }
+
+        [Fact]
+        public async Task Hmac_BodyExceedsMax_Returns401()
+        {
+            // DoS guard: attacker sends a 3 MB body when MaxBodyBytes=1 MB. Middleware
+            // aborts the read mid-stream before the full body is buffered, returns 401.
+            // Rejection is generic (no 413) so an attacker probing can't distinguish
+            // "too big" from "bad signature".
+            var customerGuid = new TestHeaderCustomerGUID();
+            var config = BuildConfig(new() {
+                ["Enabled"] = "true",
+                ["RequireSignature"] = "true",
+                ["Secret"] = TestSecret,
+                ["MaxBodyBytes"] = "1048576", // 1 MB
+            });
             var middleware = CreateMiddleware(customerGuid, config);
 
             var context = new DefaultHttpContext();
-            context.Request.Method = "GET";
+            context.Request.Method = "POST";
             context.Request.Path = "/api/x";
+            // 3 MB of zeros — well past the 1 MB cap.
+            var body = new byte[3 * 1024 * 1024];
+            context.Request.Body = new MemoryStream(body);
+            context.Request.ContentLength = body.Length;
             context.Request.Headers["X-CustomerGUID"] = Guid.NewGuid().ToString();
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            context.Request.Headers["X-Customer-Timestamp"] = ts.ToString();
+            // Signature would be valid for the body, but cap check fires first.
+            context.Request.Headers["X-Customer-Signature"] =
+                ComputeSignature(TestSecret, ts, "POST", "/api/x", body);
+            context.Response.Body = new MemoryStream();
+
+            await middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+            Assert.Equal(401, context.Response.StatusCode);
+        }
+
+        [Fact]
+        public async Task Hmac_PathBase_IncludedInCanonical()
+        {
+            // Reverse-proxy scenario: OWS mounted at /owspublic. Server's Request.Path
+            // strips the base; without PathBase included, server reconstructs "/api/x"
+            // while client signs "/owspublic/api/x" → every request 401. This test signs
+            // with the full prefixed path and verifies the middleware accepts it.
+            var customerGuid = new TestHeaderCustomerGUID();
+            var config = BuildConfig(new() {
+                ["Enabled"] = "true",
+                ["RequireSignature"] = "true",
+                ["Secret"] = TestSecret,
+            });
+            var middleware = CreateMiddleware(customerGuid, config);
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = "POST";
+            context.Request.PathBase = "/owspublic";
+            context.Request.Path = "/api/x";
+            var body = Encoding.UTF8.GetBytes("{}");
+            context.Request.Body = new MemoryStream(body);
+            context.Request.ContentLength = body.Length;
+            context.Request.Headers["X-CustomerGUID"] = Guid.NewGuid().ToString();
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            context.Request.Headers["X-Customer-Timestamp"] = ts.ToString();
+            // Client signs the full URL path as it sees it (/owspublic/api/x).
+            context.Request.Headers["X-Customer-Signature"] =
+                ComputeSignature(TestSecret, ts, "POST", "/owspublic/api/x", body);
 
             bool nextCalled = false;
             await middleware.InvokeAsync(context, _ => { nextCalled = true; return Task.CompletedTask; });
 
             Assert.True(nextCalled);
+            Assert.NotEqual(401, context.Response.StatusCode);
         }
     }
 }

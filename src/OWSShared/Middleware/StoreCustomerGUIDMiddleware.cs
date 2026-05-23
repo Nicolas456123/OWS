@@ -37,6 +37,13 @@ namespace OWSShared.Middleware
         // request. Overridable per-deployment via OWSHmac:ClockSkewSeconds.
         private const int DefaultClockSkewSeconds = 300;
 
+        // Largest body we'll buffer for hashing. 2 MB is well above every legitimate
+        // OWS write (AddOrUpdateCustomCharacterData caps at 64 KB; AddOrUpdateGlobalData
+        // Item at 1 MB; all character + ability + zone payloads stay under 1 MB). Without
+        // this cap, a single 10 GB POST would OOM the process — rate-limit per-IP doesn't
+        // help because one request kills it. Overridable via OWSHmac:MaxBodyBytes.
+        private const long DefaultMaxBodyBytes = 2L * 1024 * 1024;
+
         private readonly IHeaderCustomerGUID _customerGuid;
         private readonly HmacOptions _hmac;
 
@@ -132,18 +139,41 @@ namespace OWSShared.Middleware
             }
 
             // Body must be re-readable by downstream model binders, so buffer it.
+            // EnableBuffering switches the request stream to a seekable buffer; size cap is
+            // enforced inside Sha256HexOfBodyAsync (which streams the read chunk-by-chunk).
             context.Request.EnableBuffering();
-            var bodyHashHex = await Sha256HexOfBodyAsync(context.Request);
+            var (bodyHashHex, oversized) = await Sha256HexOfBodyAsync(context.Request, _hmac.MaxBodyBytes);
+            if (oversized)
+            {
+                // Keep the rejection generic (still routed through Reject401 below) so an
+                // attacker can't distinguish "body too large" from "signature mismatch" —
+                // both look identical to a probe. The Warning log carries the real reason
+                // for operator visibility.
+                Log.Warning("HMAC rejected: body exceeds {Max} bytes (path {Path}, IP {IP})",
+                    _hmac.MaxBodyBytes,
+                    context.Request.Path.Value,
+                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+                return HmacVerdict.Reject;
+            }
 
             // Canonical string: timestamp \n METHOD \n path \n sha256(body)
-            // path uses PathBase + Path to match what the client sees (excludes query string,
-            // which is fine — query strings are not used for state-changing OWS endpoints).
+            // path includes PathBase so signatures match when OWS is mounted behind a
+            // reverse proxy at a sub-path (e.g. nginx location /owspublic/). The UE client
+            // signs the full URL path it constructs; without PathBase the server would
+            // reconstruct only "/api/X" while the client signed "/owspublic/api/X" and
+            // every request would 401 with no clue why. Query string still excluded — OWS
+            // state-changing endpoints don't carry meaningful query params.
+            var pathBaseValue = context.Request.PathBase.HasValue ? context.Request.PathBase.Value : string.Empty;
+            var pathValue = context.Request.Path.HasValue ? context.Request.Path.Value : string.Empty;
+            var fullPath = pathBaseValue + pathValue;
+            if (fullPath.Length == 0) fullPath = "/";
+
             var canonical = string.Concat(
                 clientUnix.ToString(),
                 "\n",
                 context.Request.Method.ToUpperInvariant(),
                 "\n",
-                context.Request.Path.HasValue ? context.Request.Path.Value : "/",
+                fullPath,
                 "\n",
                 bodyHashHex);
 
@@ -176,22 +206,36 @@ namespace OWSShared.Middleware
             return HmacVerdict.Accept;
         }
 
-        private static async Task<string> Sha256HexOfBodyAsync(HttpRequest request)
+        private static async Task<(string Hash, bool Oversized)> Sha256HexOfBodyAsync(HttpRequest request, long maxBytes)
         {
-            // Empty body is common (GETs). Use the canonical sha256 of empty input rather
-            // than a special-case sentinel so client and server agree without branching.
-            if (request.ContentLength == 0)
+            // Early reject on declared oversized content — saves the read loop entirely.
+            // For chunked encoding (ContentLength is null) we still need to stream because
+            // the actual size is only known by reading.
+            if (request.ContentLength.HasValue && request.ContentLength.Value > maxBytes)
             {
-                using var emptySha = SHA256.Create();
-                return BytesToHex(emptySha.ComputeHash(Array.Empty<byte>()));
+                return (string.Empty, true);
             }
 
+            // Stream the body in chunks, abort the moment we cross the cap. This protects
+            // against attackers who send Content-Length: 0 but actually stream 10 GB
+            // (chunked Transfer-Encoding strips the header).
             using var ms = new MemoryStream();
-            await request.Body.CopyToAsync(ms);
+            var buffer = new byte[8192];
+            long total = 0;
+            int read;
+            while ((read = await request.Body.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (total > maxBytes)
+                {
+                    return (string.Empty, true);
+                }
+                await ms.WriteAsync(buffer, 0, read);
+            }
             request.Body.Position = 0; // rewind so MVC model binders can read
 
             using var sha = SHA256.Create();
-            return BytesToHex(sha.ComputeHash(ms.ToArray()));
+            return (BytesToHex(sha.ComputeHash(ms.ToArray())), false);
         }
 
         private static string ComputeHmacSha256Hex(byte[] secret, string canonical)
@@ -231,14 +275,17 @@ namespace OWSShared.Middleware
         /// <summary>
         /// HMAC configuration parsed from appsettings "OWSHmac" section. Defensive defaults:
         /// if the section is missing, HMAC is disabled (legacy behavior). If Enabled=true
-        /// but Secret is empty, we still disable + log an error rather than fail open with
-        /// an empty key — better to be loud about misconfiguration.
+        /// but Secret is empty we THROW at construction — silently disabling would be
+        /// fail-open in disguise (operators believe HMAC is enforcing tenant identity
+        /// when it has been bypassed since startup; after log rotation the single Error
+        /// line is gone and there's no signal anything is wrong).
         /// </summary>
         private sealed class HmacOptions
         {
             public bool Enabled { get; private init; }
             public bool RequireSignature { get; private init; }
             public int ClockSkewSeconds { get; private init; }
+            public long MaxBodyBytes { get; private init; } = DefaultMaxBodyBytes;
             public byte[] SecretBytes { get; private init; } = Array.Empty<byte>();
 
             public static HmacOptions FromConfiguration(IConfiguration config)
@@ -247,13 +294,20 @@ namespace OWSShared.Middleware
                 var enabled = section.GetValue<bool?>("Enabled") ?? false;
                 var requireSig = section.GetValue<bool?>("RequireSignature") ?? false;
                 var skew = section.GetValue<int?>("ClockSkewSeconds") ?? DefaultClockSkewSeconds;
+                var maxBody = section.GetValue<long?>("MaxBodyBytes") ?? DefaultMaxBodyBytes;
                 var secret = section.GetValue<string>("Secret") ?? string.Empty;
 
                 if (enabled && string.IsNullOrEmpty(secret))
                 {
-                    Log.Error("OWSHmac:Enabled=true but OWSHmac:Secret is empty. HMAC check disabled. " +
-                              "Set OWSHmac:Secret to a 32+ byte random string in appsettings or env var.");
-                    enabled = false;
+                    // Fail-CLOSED: refuse to start. The previous behavior (disable HMAC,
+                    // log Error once) was fail-OPEN in practice — after log rotation the
+                    // operator had no signal that signing was off. Throwing forces the
+                    // operator to either set the secret or explicitly Enabled=false.
+                    var msg = "OWSHmac:Enabled=true but OWSHmac:Secret is empty. " +
+                              "Set OWSHmac:Secret to a 32+ byte random string, " +
+                              "or set OWSHmac:Enabled=false to opt out.";
+                    Log.Error(msg);
+                    throw new InvalidOperationException(msg);
                 }
 
                 return new HmacOptions
@@ -261,6 +315,7 @@ namespace OWSShared.Middleware
                     Enabled = enabled,
                     RequireSignature = requireSig,
                     ClockSkewSeconds = Math.Max(1, skew),
+                    MaxBodyBytes = Math.Max(1024, maxBody),  // 1 KB floor — anything below is misconfig
                     SecretBytes = Encoding.UTF8.GetBytes(secret),
                 };
             }

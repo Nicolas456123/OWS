@@ -29,6 +29,13 @@ namespace OWSCharacterPersistence.Requests.Characters
         private const int MaxLevel = 1000;
         private const int MaxCurrency = int.MaxValue / 2;   // ~1.07 billion, leaves headroom for sums
         private const int MaxDescriptionLength = 4096;
+        // CharName is the SP lookup key — match the DB column cap (SelectedCharacterName
+        // is varchar(50) in OpenWorldServerContext). A 50 MB CharName would otherwise reach
+        // the SP unbounded and burn DB CPU on the WHERE match. Truncation > rejection here:
+        // a too-long CharName then won't match any row, so the update silently no-ops
+        // instead of corrupting state. ValidateCharacterName at the API layer covers
+        // pattern validation; this is the persistence-side defensive cap.
+        private const int MaxCharNameLength = 50;
 
         public UpdateCharacterStats updateCharacterStats { get; set; }
 
@@ -100,6 +107,12 @@ namespace OWSCharacterPersistence.Requests.Characters
         private void SanitizeStats(UpdateCharacterStats s)
         {
             // Identity + cosmetic
+            // CharName is the row-targeting key — cap at the DB column max so a malicious
+            // payload can't smuggle multi-MB lookup keys to the SP. Null → empty so the
+            // SP WHERE clause won't match anything (safe no-op instead of NRE).
+            s.CharName = s.CharName == null
+                ? string.Empty
+                : (s.CharName.Length > MaxCharNameLength ? s.CharName.Substring(0, MaxCharNameLength) : s.CharName);
             s.CharacterLevel = Math.Clamp(s.CharacterLevel, 1, MaxLevel);
             s.Gender = Math.Clamp(s.Gender, 0, 64);
             s.Size = Math.Clamp(s.Size, 0, 1000);
