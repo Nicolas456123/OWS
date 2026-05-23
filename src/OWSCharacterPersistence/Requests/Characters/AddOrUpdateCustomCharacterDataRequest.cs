@@ -19,6 +19,11 @@ namespace OWSCharacterPersistence.Requests.Characters
         // accidental DoS by 1 MB column names.
         private const int MaxFieldNameLength = 128;
         private const int MaxFieldValueLength = 64 * 1024; // 64 KB
+        // CharacterName is the SP lookup key. Match the DB column max (SelectedCharacterName
+        // is varchar(50) in OpenWorldServerContext). Without this cap an attacker could send
+        // a 50 MB CharacterName that reached the SP unbounded, burning DB CPU on the WHERE
+        // match. Null/empty rejected here so the SP doesn't NRE on a missing key.
+        private const int MaxCharacterNameLength = 50;
 
         public AddOrUpdateCustomCharacterData addOrUpdateCustomCharacterData { get; set; }
 
@@ -38,13 +43,16 @@ namespace OWSCharacterPersistence.Requests.Characters
             // legitimate write. Drop silently with a Warning so the offender's pattern shows
             // up in logs without giving them feedback to tune their attack.
             if (addOrUpdateCustomCharacterData == null ||
+                string.IsNullOrWhiteSpace(addOrUpdateCustomCharacterData.CharacterName) ||
+                addOrUpdateCustomCharacterData.CharacterName.Length > MaxCharacterNameLength ||
                 string.IsNullOrWhiteSpace(addOrUpdateCustomCharacterData.CustomFieldName) ||
                 addOrUpdateCustomCharacterData.CustomFieldName.Length > MaxFieldNameLength ||
                 (addOrUpdateCustomCharacterData.FieldValue != null &&
                  addOrUpdateCustomCharacterData.FieldValue.Length > MaxFieldValueLength))
             {
                 Log.Warning(
-                    "AddOrUpdateCustomCharacterData rejected: oversized or missing fields (NameLen={NameLen}, ValueLen={ValueLen}, Customer={Customer})",
+                    "AddOrUpdateCustomCharacterData rejected: oversized or missing fields (CharNameLen={CharNameLen}, FieldNameLen={NameLen}, ValueLen={ValueLen}, Customer={Customer})",
+                    addOrUpdateCustomCharacterData?.CharacterName?.Length ?? 0,
                     addOrUpdateCustomCharacterData?.CustomFieldName?.Length ?? 0,
                     addOrUpdateCustomCharacterData?.FieldValue?.Length ?? 0,
                     customerGUID);

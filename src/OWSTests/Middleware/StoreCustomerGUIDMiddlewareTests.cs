@@ -376,6 +376,75 @@ namespace OWSTests.Middleware
         }
 
         [Fact]
+        public async Task Hmac_RejectedRequest_DoesNotLeakTenantGUID()
+        {
+            // Audit-log hardening: on HMAC rejection, the scoped IHeaderCustomerGUID
+            // must NOT carry the attacker-supplied GUID — otherwise downstream Serilog
+            // enrichers or exception filters would attribute the probe to whichever
+            // tenant the attacker named (logged "tenant <victim> failed HMAC" when the
+            // attacker just made up the GUID). After fix #8, the GUID is only committed
+            // to the scope after all checks pass.
+            var customerGuid = new TestHeaderCustomerGUID();
+            var config = BuildConfig(new() {
+                ["Enabled"] = "true",
+                ["RequireSignature"] = "true",
+                ["Secret"] = TestSecret,
+            });
+            var middleware = CreateMiddleware(customerGuid, config);
+
+            var attackerGuid = Guid.NewGuid();
+            var context = new DefaultHttpContext();
+            context.Request.Method = "POST";
+            context.Request.Path = "/api/x";
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes("{}"));
+            context.Request.ContentLength = 2;
+            context.Request.Headers["X-CustomerGUID"] = attackerGuid.ToString();
+            context.Request.Headers["X-Customer-Timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+            context.Request.Headers["X-Customer-Signature"] = new string('a', 64); // wrong
+            context.Response.Body = new MemoryStream();
+
+            await middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+            Assert.Equal(401, context.Response.StatusCode);
+            Assert.Equal(Guid.Empty, customerGuid.CustomerGUID);
+            Assert.NotEqual(attackerGuid, customerGuid.CustomerGUID);
+        }
+
+        [Theory]
+        [InlineData("-9223372036854775808")] // long.MinValue
+        [InlineData("9223372036854775807")]  // long.MaxValue
+        [InlineData("-1")]                    // negative — Unix time can't be < 0
+        public async Task Hmac_ExtremeTimestamp_Returns401NotCrash(string timestampStr)
+        {
+            // Math.Abs(long.MinValue) throws OverflowException. Before fix #12, an
+            // attacker sending X-Customer-Timestamp: -9223372036854775808 crashed
+            // the request with 500 (bypassing the standard rejection log). Now the
+            // bounds-check rejects cleanly with 401 before any arithmetic.
+            var customerGuid = new TestHeaderCustomerGUID();
+            var config = BuildConfig(new() {
+                ["Enabled"] = "true",
+                ["RequireSignature"] = "true",
+                ["Secret"] = TestSecret,
+            });
+            var middleware = CreateMiddleware(customerGuid, config);
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = "POST";
+            context.Request.Path = "/api/x";
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes("{}"));
+            context.Request.ContentLength = 2;
+            context.Request.Headers["X-CustomerGUID"] = Guid.NewGuid().ToString();
+            context.Request.Headers["X-Customer-Timestamp"] = timestampStr;
+            context.Request.Headers["X-Customer-Signature"] = new string('a', 64);
+            context.Response.Body = new MemoryStream();
+
+            // Must not throw; must return clean 401.
+            await middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+            Assert.Equal(401, context.Response.StatusCode);
+        }
+
+        [Fact]
         public async Task Hmac_PathBase_IncludedInCanonical()
         {
             // Reverse-proxy scenario: OWS mounted at /owspublic. Server's Request.Path

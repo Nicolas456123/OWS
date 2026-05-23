@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -44,6 +45,15 @@ namespace OWSShared.Middleware
         // help because one request kills it. Overridable via OWSHmac:MaxBodyBytes.
         private const long DefaultMaxBodyBytes = 2L * 1024 * 1024;
 
+        // Per-IP throttle for the Phase 1 opt-in warning. Without this, every legitimate
+        // unsigned request from a still-unpatched client emits one Log.Warning — at 5k
+        // req/s that's ~50 MB/min of warnings, fills the disk in 2 hours, and rotates
+        // out real security signal. Keep it dead simple: one timestamp per IP, only log
+        // if 60s have passed since the last warn from that IP. Bounded dictionary growth.
+        private const int UnsignedWarnThrottleSeconds = 60;
+        private const int UnsignedWarnDictionaryMax = 10_000;
+        private static readonly ConcurrentDictionary<string, long> _lastUnsignedWarnAt = new();
+
         private readonly IHeaderCustomerGUID _customerGuid;
         private readonly HmacOptions _hmac;
 
@@ -55,13 +65,15 @@ namespace OWSShared.Middleware
 
         public async Task InvokeAsync(HttpContext context, RequestDelegate next)
         {
-            // 1) Parse + validate the tenant GUID (unchanged legacy behavior).
+            // 1) Parse + validate the tenant GUID into a LOCAL variable. We deliberately
+            // do NOT write it to the scoped IHeaderCustomerGUID yet — see step 3.
+            Guid parsedGuid;
             try
             {
-                _customerGuid.CustomerGUID = Guid.Parse(context.Request.Headers.FirstOrDefault(x =>
+                parsedGuid = Guid.Parse(context.Request.Headers.FirstOrDefault(x =>
                     string.Equals(x.Key, HeaderCustomerGuid, StringComparison.CurrentCultureIgnoreCase)).Value.ToString());
 
-                if (_customerGuid.CustomerGUID == Guid.Empty)
+                if (parsedGuid == Guid.Empty)
                 {
                     await Reject401(context, "Invalid or missing X-CustomerGUID header");
                     return;
@@ -91,6 +103,13 @@ namespace OWSShared.Middleware
                 // verdict == Accept (Strict pass OR Unsigned + RequireSignature=false): continue.
             }
 
+            // 3) ONLY now commit the tenant GUID to the scope. If we set it earlier,
+            // downstream enrichers (Serilog request-completion log, exception filters,
+            // anything reading IHeaderCustomerGUID in the same scope) would record the
+            // attacker-supplied GUID against a rejected request — audit logs would
+            // misattribute probing attempts to whatever tenant the attacker named.
+            _customerGuid.CustomerGUID = parsedGuid;
+
             await next(context);
         }
 
@@ -116,10 +135,7 @@ namespace OWSShared.Middleware
                     return HmacVerdict.Reject;
                 }
 
-                Log.Warning("HMAC opt-in: unsigned request accepted (path {Path}, IP {IP}). " +
-                            "Flip OWSHmac:RequireSignature=true once all clients are patched.",
-                    context.Request.Path.Value,
-                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+                MaybeLogUnsignedOptIn(context);
                 return HmacVerdict.Accept;
             }
 
@@ -131,10 +147,18 @@ namespace OWSShared.Middleware
                 return HmacVerdict.Reject;
             }
             var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (Math.Abs(nowUnix - clientUnix) > _hmac.ClockSkewSeconds)
+            // Bounds-check clientUnix before any arithmetic so a malicious value like
+            // long.MinValue cannot make (nowUnix - clientUnix) overflow and reach
+            // Math.Abs (which throws OverflowException on long.MinValue → returns 500
+            // instead of clean 401, AND bypasses the standard rejection log path).
+            // Two explicit comparisons cover past + future drift without any subtraction
+            // when the timestamp is out-of-range.
+            if (clientUnix < 0
+                || clientUnix > nowUnix + _hmac.ClockSkewSeconds
+                || nowUnix - clientUnix > _hmac.ClockSkewSeconds)
             {
-                Log.Warning("HMAC rejected: timestamp drift {Drift}s exceeds {Allowed}s (path {Path})",
-                    nowUnix - clientUnix, _hmac.ClockSkewSeconds, context.Request.Path.Value);
+                Log.Warning("HMAC rejected: timestamp out of skew window (client {Client}, now {Now}, allowed {Allowed}s, path {Path})",
+                    clientUnix, nowUnix, _hmac.ClockSkewSeconds, context.Request.Path.Value);
                 return HmacVerdict.Reject;
             }
 
@@ -254,6 +278,37 @@ namespace OWSShared.Middleware
         // -------------------------------------------------------------------------
         // Helpers
         // -------------------------------------------------------------------------
+
+        // Per-IP-per-minute throttle for the Phase 1 opt-in warning. See dictionary
+        // declaration at top of class for rationale. We bound the dictionary at 10k
+        // entries: on overflow, clear and start over — the throttle window resets but
+        // memory stays bounded against an attacker rotating source IPs to inflate the
+        // log volume. Fire-and-forget logging — never let a throttle failure block the
+        // request path.
+        private static void MaybeLogUnsignedOptIn(HttpContext context)
+        {
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var nowSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var lastSec = _lastUnsignedWarnAt.TryGetValue(ip, out var v) ? v : 0;
+            if (nowSec - lastSec < UnsignedWarnThrottleSeconds)
+            {
+                return; // throttled — already warned for this IP within the window
+            }
+
+            // Bound dictionary growth — attacker rotating IPs can't blow memory.
+            if (_lastUnsignedWarnAt.Count > UnsignedWarnDictionaryMax)
+            {
+                _lastUnsignedWarnAt.Clear();
+            }
+            _lastUnsignedWarnAt[ip] = nowSec;
+
+            Log.Warning("HMAC opt-in: unsigned request from {IP} (path {Path}). " +
+                        "Flip OWSHmac:RequireSignature=true once all clients are patched. " +
+                        "(Further warnings from this IP throttled {ThrottleSec}s.)",
+                ip,
+                context.Request.Path.Value,
+                UnsignedWarnThrottleSeconds);
+        }
 
         private static async Task Reject401(HttpContext context, string message)
         {
