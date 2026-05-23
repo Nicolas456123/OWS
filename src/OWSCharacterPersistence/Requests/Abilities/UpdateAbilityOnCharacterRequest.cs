@@ -1,6 +1,7 @@
 ﻿using OWSData.Models.Composites;
 using OWSData.Repositories.Interfaces;
 using OWSShared.Interfaces;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -58,6 +59,22 @@ namespace OWSCharacterPersistence.Requests.Abilities
         public async Task<SuccessAndErrorMessage> Handle()
         {
             output = new SuccessAndErrorMessage();
+
+            // Same caps as AddAbilityToCharacter — keep them in lockstep so an attacker
+            // can't switch endpoints to bypass the stricter one (see AbilityRequestLimits).
+            if (!AbilityRequestLimits.IsValid(AbilityName, CharacterName, AbilityLevel, CharHasAbilitiesCustomJSON))
+            {
+                Log.Warning("UpdateAbilityOnCharacter rejected (Customer={Customer}, AbilityName.Len={AbilityLen}, CharName.Len={CharLen}, Level={Level}, CustomJson.Len={JsonLen})",
+                    customerGUID,
+                    AbilityName?.Length ?? 0,
+                    CharacterName?.Length ?? 0,
+                    AbilityLevel,
+                    CharHasAbilitiesCustomJSON?.Length ?? 0);
+                output.Success = false;
+                output.ErrorMessage = "Invalid ability request.";
+                return output;
+            }
+
             await charactersRepository.UpdateAbilityOnCharacter(customerGUID, AbilityName, CharacterName, AbilityLevel, CharHasAbilitiesCustomJSON);
 
             output.Success = true;

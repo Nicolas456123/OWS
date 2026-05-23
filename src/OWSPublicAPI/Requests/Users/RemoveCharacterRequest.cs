@@ -42,10 +42,15 @@ namespace OWSPublicAPI.Requests.Users
         /// <remarks>
         /// Injects the dependencies for the CreateCharacterRequest.
         /// </remarks>
-        public void SetData(IUsersRepository usersRepository, IHeaderCustomerGUID customerGuid)
+        public void SetData(IUsersRepository usersRepository, IPublicAPIInputValidation publicAPIInputValidation, IHeaderCustomerGUID customerGuid)
         {
             CustomerGUID = customerGuid.CustomerGUID;
             this.usersRepository = usersRepository;
+            // Same validation surface as CreateCharacterRequest. Without this wire, the
+            // delete path used to accept any string — including empty, oversized, or
+            // exotic-charset names — letting a caller probe for character existence
+            // (and possibly trip the repo's "not found" path in suggestive ways).
+            this.publicAPIInputValidation = publicAPIInputValidation;
         }
 
         /// <summary>
@@ -56,9 +61,20 @@ namespace OWSPublicAPI.Requests.Users
         /// </remarks>
         public async Task<IActionResult> Handle()
         {
-            SuccessAndErrorMessage output;
+            // Reuse the project-wide character-name validator. Returns a non-empty message
+            // when the name violates length/charset rules; surface it as a generic failure
+            // (the validator's message is already user-safe).
+            var nameError = publicAPIInputValidation.ValidateCharacterName(CharacterName);
+            if (!string.IsNullOrEmpty(nameError))
+            {
+                return new OkObjectResult(new SuccessAndErrorMessage
+                {
+                    Success = false,
+                    ErrorMessage = nameError
+                });
+            }
 
-            output = await usersRepository.RemoveCharacter(CustomerGUID, UserSessionGUID, CharacterName);
+            SuccessAndErrorMessage output = await usersRepository.RemoveCharacter(CustomerGUID, UserSessionGUID, CharacterName);
 
             return new OkObjectResult(output);
         }

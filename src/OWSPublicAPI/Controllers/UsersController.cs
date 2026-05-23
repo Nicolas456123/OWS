@@ -269,7 +269,7 @@ namespace OWSPublicAPI.Controllers
         [Produces(typeof(SuccessAndErrorMessage))]
         public async Task<IActionResult> RemoveCharacter([FromBody] RemoveCharacterRequest request)
         {
-            request.SetData(_usersRepository, _customerGuid);
+            request.SetData(_usersRepository, _publicAPIInputValidation, _customerGuid);
             return await request.Handle();
         }
     }
